@@ -11,13 +11,14 @@ api.interceptors.request.use((config) => {
 });
 
 api.interceptors.response.use(
-  (r) => r,
-  (err) => {
-    if (err.response?.status === 401) {
-      // Token expired/invalid — let UI handle.
+  (r) => {
+    const ct = r.headers?.['content-type'] || '';
+    if (typeof r.data === 'string' && !ct.includes('application/json')) {
+      return Promise.reject(new Error('API returned non-JSON response — check VITE_API_URL'));
     }
-    return Promise.reject(err);
-  }
+    return r;
+  },
+  (err) => Promise.reject(err)
 );
 
 export default api;

@@ -9,7 +9,10 @@ const Offers = () => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    api.get('/offers').then((r) => setOffers(r.data)).finally(() => setLoading(false));
+    api.get('/offers')
+      .then((r) => setOffers(Array.isArray(r.data) ? r.data : []))
+      .catch(() => setOffers([]))
+      .finally(() => setLoading(false));
   }, []);
 
   const copy = (code) => {

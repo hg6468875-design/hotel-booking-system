@@ -11,9 +11,15 @@ const Home = () => {
   const [offers, setOffers] = useState([]);
 
   useEffect(() => {
-    api.get('/rooms').then((r) => setRooms(r.data.slice(0, 6)));
-    api.get('/hotels').then((r) => setHotels(r.data));
-    api.get('/offers').then((r) => setOffers(r.data));
+    api.get('/rooms')
+      .then((r) => setRooms(Array.isArray(r.data) ? r.data.slice(0, 6) : []))
+      .catch(() => setRooms([]));
+    api.get('/hotels')
+      .then((r) => setHotels(Array.isArray(r.data) ? r.data : []))
+      .catch(() => setHotels([]));
+    api.get('/offers')
+      .then((r) => setOffers(Array.isArray(r.data) ? r.data : []))
+      .catch(() => setOffers([]));
   }, []);
 
   return (

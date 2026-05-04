@@ -34,7 +34,8 @@ const Rooms = () => {
     if (guests) qs.set('guests', guests);
     api
       .get(`/rooms?${qs.toString()}`)
-      .then((r) => setRooms(r.data))
+      .then((r) => setRooms(Array.isArray(r.data) ? r.data : []))
+      .catch(() => setRooms([]))
       .finally(() => setLoading(false));
   }, [q, guests]);
 

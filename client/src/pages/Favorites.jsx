@@ -9,7 +9,10 @@ const Favorites = () => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    api.get('/favorites').then((r) => setRooms(r.data)).finally(() => setLoading(false));
+    api.get('/favorites')
+      .then((r) => setRooms(Array.isArray(r.data) ? r.data : []))
+      .catch(() => setRooms([]))
+      .finally(() => setLoading(false));
   }, []);
 
   return (

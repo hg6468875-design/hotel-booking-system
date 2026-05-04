@@ -30,7 +30,10 @@ const MyBookings = () => {
 
   const load = () => {
     setLoading(true);
-    api.get('/bookings').then((r) => setBookings(r.data)).finally(() => setLoading(false));
+    api.get('/bookings')
+      .then((r) => setBookings(Array.isArray(r.data) ? r.data : []))
+      .catch(() => setBookings([]))
+      .finally(() => setLoading(false));
   };
   useEffect(load, []);
 
