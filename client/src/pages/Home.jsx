@@ -19,15 +19,16 @@ const Home = () => {
   return (
     <div>
       {/* HERO */}
-      <section className="relative overflow-hidden">
+      <section className="relative overflow-hidden bg-slate-900">
         <div className="absolute inset-0">
           <img
             src="https://images.unsplash.com/photo-1582719508461-905c673771fd?w=1920&q=80"
             alt="luxury hotel"
-            className="w-full h-full object-cover"
+            className="w-full h-full object-cover opacity-70"
+            loading="eager"
           />
-          <div className="absolute inset-0 bg-gradient-to-r from-slate-900/80 via-slate-900/50 to-transparent" />
-          <div className="absolute inset-0 bg-gradient-to-t from-slate-900/40 to-transparent" />
+          <div className="absolute inset-0 bg-gradient-to-r from-slate-900/90 via-slate-900/70 to-slate-900/40" />
+          <div className="absolute inset-0 bg-gradient-to-t from-slate-900/60 to-transparent" />
         </div>
         <div className="relative section py-24 md:py-36">
           <div className="max-w-2xl text-white animate-fade-in">
