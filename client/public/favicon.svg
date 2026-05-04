@@ -1,0 +1,18 @@
+<svg version="1.2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+	<defs>
+		<linearGradient id="g1" x2="1" gradientUnits="userSpaceOnUse" gradientTransform="matrix(32,32,-32,32,0,0)">
+			<stop offset="0" stop-color="#8b5cf6"/>
+			<stop offset="1" stop-color="#6d28d9"/>
+		</linearGradient>
+	</defs>
+	<style>
+		tspan { white-space:pre } 
+		.s0 { fill: url(#g1) } 
+		.t1 { font-size: 20px;fill: #ffffff;font-weight: 400;font-family: "Inter-Bold", "Inter" } 
+	</style>
+	<path fill-rule="evenodd" class="s0" d="m8 0h16c4.42 0 8 3.58 8 8v16c0 4.42-3.58 8-8 8h-16c-4.42 0-8-3.58-8-8v-16c0-4.42 3.58-8 8-8z"/>
+	<text id="SL" transform="translate(5,7)">
+		<tspan x="0" y="14.6" class="t1">S</tspan><tspan  y="14.6" class="t1">L
+</tspan>
+	</text>
+</svg>
