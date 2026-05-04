@@ -9,7 +9,18 @@ import { seedData } from './data/seed.js';
 import { authRequired, adminRequired, JWT_SECRET } from './middleware/auth.js';
 
 const app = express();
-app.use(cors());
+
+const allowedOrigins = (process.env.CORS_ORIGINS || '')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
+
+app.use(
+  cors({
+    origin: allowedOrigins.length === 0 ? true : allowedOrigins,
+    credentials: true,
+  })
+);
 app.use(express.json());
 app.use(morgan('dev'));
 
