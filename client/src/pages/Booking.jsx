@@ -1,9 +1,25 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
-import { FiCheckCircle, FiCreditCard, FiLock, FiTag } from 'react-icons/fi';
+import { FiCheckCircle, FiCreditCard, FiLock, FiTag, FiAlertCircle } from 'react-icons/fi';
 import api from '../services/api';
 import { useAuth } from '../context/AuthContext';
+import {
+  formatCardNumber,
+  formatExpiry,
+  isEmail,
+  isPhone,
+  isValidUpi,
+  onlyDigits,
+  validateCard,
+} from '../services/validators';
+
+const FieldError = ({ message }) =>
+  message ? (
+    <p className="text-xs text-rose-600 mt-1 flex items-center gap-1">
+      <FiAlertCircle size={12} /> {message}
+    </p>
+  ) : null;
 
 const Booking = () => {
   const { state } = useLocation();
@@ -21,11 +37,14 @@ const Booking = () => {
     phone: '',
     specialRequest: '',
     paymentMethod: 'card',
+    cardName: user?.name || '',
     cardNumber: '',
     cardExpiry: '',
     cardCvv: '',
+    upiId: '',
     couponCode: '',
   });
+  const [errors, setErrors] = useState({});
   const [coupon, setCoupon] = useState(null);
   const [step, setStep] = useState(1);
   const [confirming, setConfirming] = useState(false);
@@ -35,6 +54,11 @@ const Booking = () => {
   const subtotal = useMemo(() => (room ? room.pricePerNight * nights : 0), [room, nights]);
   const discount = coupon ? coupon.discount : 0;
   const total = Math.max(0, subtotal - discount);
+
+  const setField = (key, value) => {
+    setForm((f) => ({ ...f, [key]: value }));
+    if (errors[key]) setErrors((e) => ({ ...e, [key]: undefined }));
+  };
 
   const applyCoupon = async () => {
     if (!form.couponCode.trim()) return;
@@ -48,18 +72,63 @@ const Booking = () => {
     }
   };
 
+  const validateGuestStep = () => {
+    const next = {};
+    if (!form.name.trim()) next.name = 'Full name is required';
+    if (!form.email.trim()) next.email = 'Email is required';
+    else if (!isEmail(form.email)) next.email = 'Enter a valid email';
+    if (!form.phone.trim()) next.phone = 'Phone is required';
+    else if (!isPhone(form.phone)) next.phone = 'Enter a valid phone number';
+    setErrors(next);
+    return Object.keys(next).length === 0;
+  };
+
+  const validatePaymentStep = () => {
+    let next = {};
+    if (form.paymentMethod === 'card') {
+      next = validateCard(form);
+    } else if (form.paymentMethod === 'upi') {
+      if (!isValidUpi(form.upiId)) next.upiId = 'Enter a valid UPI ID (e.g. name@bank)';
+    }
+    setErrors(next);
+    return Object.keys(next).length === 0;
+  };
+
   const handleConfirm = async () => {
     if (step === 1) {
-      if (!form.name || !form.email || !form.phone) return toast.error('Fill in all guest details');
+      if (!validateGuestStep()) {
+        toast.error('Please fix the highlighted fields');
+        return;
+      }
       setStep(2);
       return;
     }
-    if (form.paymentMethod === 'card') {
-      if (!form.cardNumber || !form.cardExpiry || !form.cardCvv) return toast.error('Enter payment details');
+
+    if (!validatePaymentStep()) {
+      toast.error('Please fix the highlighted fields');
+      return;
     }
+
     setConfirming(true);
     try {
-      await api.post('/payments/checkout', { amount: total });
+      const paymentPayload =
+        form.paymentMethod === 'card'
+          ? {
+              method: 'card',
+              amount: total,
+              card: {
+                number: onlyDigits(form.cardNumber),
+                expiry: form.cardExpiry,
+                cvv: form.cardCvv,
+                name: form.cardName,
+              },
+            }
+          : form.paymentMethod === 'upi'
+          ? { method: 'upi', amount: total, upiId: form.upiId }
+          : { method: 'wallet', amount: total };
+
+      const { data: payment } = await api.post('/payments/checkout', paymentPayload);
+
       const { data } = await api.post('/bookings', {
         roomId: room.id,
         checkIn: state.checkIn,
@@ -68,12 +137,16 @@ const Booking = () => {
         contact: { name: form.name, email: form.email, phone: form.phone },
         specialRequest: form.specialRequest,
         couponCode: coupon?.offer?.code,
+        paymentId: payment.paymentId,
+        paymentMethod: form.paymentMethod,
       });
       setConfirmed(data);
       setStep(3);
       toast.success('Booking confirmed!');
     } catch (err) {
-      toast.error(err.response?.data?.message || 'Booking failed');
+      const apiErrors = err.response?.data?.errors;
+      if (apiErrors && typeof apiErrors === 'object') setErrors(apiErrors);
+      toast.error(err.response?.data?.message || 'Payment failed');
     } finally {
       setConfirming(false);
     }
@@ -109,28 +182,50 @@ const Booking = () => {
           {step === 1 && (
             <div className="card p-6 animate-slide-up">
               <h2 className="text-xl font-bold mb-5">Guest information</h2>
-              <div className="grid sm:grid-cols-2 gap-4">
+              <form noValidate onSubmit={(e) => { e.preventDefault(); handleConfirm(); }} className="grid sm:grid-cols-2 gap-4">
                 <div>
                   <label className="label">Full name *</label>
-                  <input className="input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+                  <input
+                    className={`input ${errors.name ? 'border-rose-400' : ''}`}
+                    value={form.name}
+                    onChange={(e) => setField('name', e.target.value)}
+                    autoComplete="name"
+                  />
+                  <FieldError message={errors.name} />
                 </div>
                 <div>
                   <label className="label">Email *</label>
-                  <input type="email" className="input" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
+                  <input
+                    type="email"
+                    inputMode="email"
+                    className={`input ${errors.email ? 'border-rose-400' : ''}`}
+                    value={form.email}
+                    onChange={(e) => setField('email', e.target.value)}
+                    autoComplete="email"
+                  />
+                  <FieldError message={errors.email} />
                 </div>
                 <div className="sm:col-span-2">
                   <label className="label">Phone *</label>
-                  <input className="input" placeholder="+1 555 123 4567" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
+                  <input
+                    inputMode="tel"
+                    className={`input ${errors.phone ? 'border-rose-400' : ''}`}
+                    placeholder="+1 555 123 4567"
+                    value={form.phone}
+                    onChange={(e) => setField('phone', e.target.value)}
+                    autoComplete="tel"
+                  />
+                  <FieldError message={errors.phone} />
                 </div>
                 <div className="sm:col-span-2">
                   <label className="label">Special requests <span className="text-slate-400">(optional)</span></label>
                   <textarea rows="3" className="input" placeholder="Late check-in, dietary preferences, etc."
-                    value={form.specialRequest} onChange={(e) => setForm({ ...form, specialRequest: e.target.value })} />
+                    value={form.specialRequest} onChange={(e) => setField('specialRequest', e.target.value)} />
                 </div>
-              </div>
-              <button onClick={handleConfirm} className="btn-primary w-full mt-6">
-                Continue to payment
-              </button>
+                <button type="submit" className="btn-primary w-full mt-2 sm:col-span-2">
+                  Continue to payment
+                </button>
+              </form>
             </div>
           )}
 
@@ -149,7 +244,7 @@ const Booking = () => {
                   <button
                     key={m.id}
                     type="button"
-                    onClick={() => setForm({ ...form, paymentMethod: m.id })}
+                    onClick={() => { setField('paymentMethod', m.id); setErrors({}); }}
                     className={`p-3 rounded-xl border-2 flex flex-col items-center gap-1 transition ${
                       form.paymentMethod === m.id ? 'border-brand-500 bg-brand-50' : 'border-slate-200 hover:border-slate-300'
                     }`}
@@ -161,50 +256,94 @@ const Booking = () => {
               </div>
 
               {form.paymentMethod === 'card' && (
-                <div className="space-y-4">
+                <form noValidate onSubmit={(e) => { e.preventDefault(); handleConfirm(); }} className="space-y-4">
+                  <div>
+                    <label className="label">Name on card</label>
+                    <input
+                      className={`input ${errors.cardName ? 'border-rose-400' : ''}`}
+                      placeholder="As printed on the card"
+                      value={form.cardName}
+                      onChange={(e) => setField('cardName', e.target.value)}
+                      autoComplete="cc-name"
+                    />
+                    <FieldError message={errors.cardName} />
+                  </div>
                   <div>
                     <label className="label">Card number</label>
                     <input
-                      className="input"
+                      className={`input ${errors.cardNumber ? 'border-rose-400' : ''}`}
                       placeholder="4242 4242 4242 4242"
-                      maxLength={19}
+                      inputMode="numeric"
+                      autoComplete="cc-number"
                       value={form.cardNumber}
-                      onChange={(e) => setForm({ ...form, cardNumber: e.target.value.replace(/(.{4})/g, '$1 ').trim() })}
+                      onChange={(e) => setField('cardNumber', formatCardNumber(e.target.value))}
                     />
+                    <FieldError message={errors.cardNumber} />
                   </div>
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <label className="label">Expiry</label>
-                      <input className="input" placeholder="MM/YY" maxLength={5}
-                        value={form.cardExpiry} onChange={(e) => setForm({ ...form, cardExpiry: e.target.value })} />
+                      <input
+                        className={`input ${errors.cardExpiry ? 'border-rose-400' : ''}`}
+                        placeholder="MM/YY"
+                        inputMode="numeric"
+                        autoComplete="cc-exp"
+                        value={form.cardExpiry}
+                        onChange={(e) => setField('cardExpiry', formatExpiry(e.target.value))}
+                      />
+                      <FieldError message={errors.cardExpiry} />
                     </div>
                     <div>
                       <label className="label">CVV</label>
-                      <input className="input" placeholder="123" maxLength={4} type="password"
-                        value={form.cardCvv} onChange={(e) => setForm({ ...form, cardCvv: e.target.value })} />
+                      <input
+                        className={`input ${errors.cardCvv ? 'border-rose-400' : ''}`}
+                        placeholder="123"
+                        type="password"
+                        inputMode="numeric"
+                        autoComplete="cc-csc"
+                        value={form.cardCvv}
+                        onChange={(e) => setField('cardCvv', onlyDigits(e.target.value).slice(0, 4))}
+                      />
+                      <FieldError message={errors.cardCvv} />
                     </div>
                   </div>
-                </div>
+                  <button type="submit" disabled={confirming} className="btn-primary w-full">
+                    {confirming ? 'Processing…' : `Pay $${total}`}
+                  </button>
+                </form>
               )}
               {form.paymentMethod === 'upi' && (
-                <div>
-                  <label className="label">UPI ID</label>
-                  <input className="input" placeholder="yourname@bank" />
-                </div>
+                <form noValidate onSubmit={(e) => { e.preventDefault(); handleConfirm(); }} className="space-y-4">
+                  <div>
+                    <label className="label">UPI ID</label>
+                    <input
+                      className={`input ${errors.upiId ? 'border-rose-400' : ''}`}
+                      placeholder="yourname@bank"
+                      value={form.upiId}
+                      onChange={(e) => setField('upiId', e.target.value)}
+                    />
+                    <FieldError message={errors.upiId} />
+                  </div>
+                  <button type="submit" disabled={confirming} className="btn-primary w-full">
+                    {confirming ? 'Processing…' : `Pay $${total}`}
+                  </button>
+                </form>
               )}
               {form.paymentMethod === 'wallet' && (
-                <p className="text-sm text-slate-500">You will be redirected to your wallet provider after confirmation.</p>
+                <div className="space-y-4">
+                  <p className="text-sm text-slate-500">You will be redirected to your wallet provider after confirmation.</p>
+                  <button type="button" onClick={handleConfirm} disabled={confirming} className="btn-primary w-full">
+                    {confirming ? 'Processing…' : `Pay $${total}`}
+                  </button>
+                </div>
               )}
 
               <p className="text-xs text-slate-500 flex items-center gap-1 mt-4">
-                <FiLock size={12} /> Payments are mocked for demo — no real charges.
+                <FiLock size={12} /> Payments are processed in test mode — use 4242 4242 4242 4242 for a successful demo charge.
               </p>
 
-              <div className="flex gap-3 mt-6">
-                <button onClick={() => setStep(1)} className="btn-outline flex-1">Back</button>
-                <button onClick={handleConfirm} disabled={confirming} className="btn-primary flex-1">
-                  {confirming ? 'Processing…' : `Pay $${total}`}
-                </button>
+              <div className="flex gap-3 mt-4">
+                <button onClick={() => { setStep(1); setErrors({}); }} className="btn-outline flex-1">Back</button>
               </div>
             </div>
           )}
@@ -251,7 +390,7 @@ const Booking = () => {
                 <div className="border-t border-slate-100 mt-4 pt-4">
                   <label className="label flex items-center gap-1"><FiTag size={12} /> Promo code</label>
                   <div className="flex gap-2">
-                    <input className="input py-2 text-sm" placeholder="Enter code" value={form.couponCode} onChange={(e) => setForm({ ...form, couponCode: e.target.value })} />
+                    <input className="input py-2 text-sm" placeholder="Enter code" value={form.couponCode} onChange={(e) => setField('couponCode', e.target.value)} />
                     <button onClick={applyCoupon} type="button" className="btn-outline text-sm py-2">Apply</button>
                   </div>
                   {coupon && <p className="text-xs text-emerald-600 mt-2 font-medium">✓ {coupon.offer.code} applied — ${discount} off</p>}

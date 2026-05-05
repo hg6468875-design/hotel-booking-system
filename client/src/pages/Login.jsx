@@ -1,25 +1,44 @@
 import { useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
-import { FiMail, FiLock, FiArrowRight } from 'react-icons/fi';
+import { FiMail, FiLock, FiArrowRight, FiAlertCircle } from 'react-icons/fi';
 import { useAuth } from '../context/AuthContext';
+import { isEmail } from '../services/validators';
 
 const Login = () => {
   const [form, setForm] = useState({ email: '', password: '' });
+  const [errors, setErrors] = useState({});
   const [loading, setLoading] = useState(false);
   const { login } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const from = location.state?.from?.pathname || '/';
 
+  const setField = (key, value) => {
+    setForm((f) => ({ ...f, [key]: value }));
+    if (errors[key]) setErrors((e) => ({ ...e, [key]: undefined }));
+  };
+
+  const validate = () => {
+    const next = {};
+    if (!form.email.trim()) next.email = 'Email is required';
+    else if (!isEmail(form.email)) next.email = 'Enter a valid email';
+    if (!form.password) next.password = 'Password is required';
+    setErrors(next);
+    return Object.keys(next).length === 0;
+  };
+
   const submit = async (e) => {
     e.preventDefault();
+    if (!validate()) return;
     setLoading(true);
     try {
       await login(form.email, form.password);
       toast.success('Welcome back!');
       navigate(from, { replace: true });
     } catch (err) {
+      const apiErrors = err.response?.data?.errors;
+      if (apiErrors && typeof apiErrors === 'object') setErrors(apiErrors);
       toast.error(err.response?.data?.message || 'Login failed');
     } finally {
       setLoading(false);
@@ -46,22 +65,26 @@ const Login = () => {
           <h1 className="text-3xl font-bold mb-2">Sign in</h1>
           <p className="text-slate-500 mb-8">Enter your credentials to access your account.</p>
 
-          <form onSubmit={submit} className="space-y-4">
+          <form noValidate onSubmit={submit} className="space-y-4">
             <div>
               <label className="label">Email address</label>
               <div className="relative">
                 <FiMail className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                <input type="email" required className="input pl-10" placeholder="you@example.com"
-                  value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
+                <input type="email" inputMode="email" autoComplete="email"
+                  className={`input pl-10 ${errors.email ? 'border-rose-400' : ''}`} placeholder="you@example.com"
+                  value={form.email} onChange={(e) => setField('email', e.target.value)} />
               </div>
+              {errors.email && <p className="text-xs text-rose-600 mt-1 flex items-center gap-1"><FiAlertCircle size={12} /> {errors.email}</p>}
             </div>
             <div>
               <label className="label">Password</label>
               <div className="relative">
                 <FiLock className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                <input type="password" required className="input pl-10" placeholder="••••••••"
-                  value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} />
+                <input type="password" autoComplete="current-password"
+                  className={`input pl-10 ${errors.password ? 'border-rose-400' : ''}`} placeholder="••••••••"
+                  value={form.password} onChange={(e) => setField('password', e.target.value)} />
               </div>
+              {errors.password && <p className="text-xs text-rose-600 mt-1 flex items-center gap-1"><FiAlertCircle size={12} /> {errors.password}</p>}
             </div>
 
             <button type="submit" disabled={loading} className="btn-primary w-full">

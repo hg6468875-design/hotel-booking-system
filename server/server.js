@@ -37,6 +37,58 @@ const nightsBetween = (a, b) => {
   return Math.max(1, Math.round(ms / 86400000));
 };
 
+// ===== Payment helpers =====
+const luhn = (digits) => {
+  if (!/^\d{12,19}$/.test(digits)) return false;
+  let sum = 0;
+  let alt = false;
+  for (let i = digits.length - 1; i >= 0; i--) {
+    let n = parseInt(digits[i], 10);
+    if (alt) {
+      n *= 2;
+      if (n > 9) n -= 9;
+    }
+    sum += n;
+    alt = !alt;
+  }
+  return sum % 10 === 0;
+};
+
+const isFutureExpiry = (expiry) => {
+  const m = /^(\d{2})\/(\d{2})$/.exec((expiry || '').trim());
+  if (!m) return false;
+  const month = parseInt(m[1], 10);
+  const year = 2000 + parseInt(m[2], 10);
+  if (month < 1 || month > 12) return false;
+  const exp = new Date(year, month, 0, 23, 59, 59);
+  return exp >= new Date();
+};
+
+const validatePayment = (payload) => {
+  const errors = {};
+  const { method, amount, card, upiId } = payload || {};
+  if (!Number.isFinite(amount) || amount < 0) errors.amount = 'Invalid amount';
+  if (!['card', 'upi', 'wallet'].includes(method)) errors.method = 'Unsupported payment method';
+  if (method === 'card') {
+    if (!card) {
+      errors.card = 'Card details required';
+    } else {
+      const number = String(card.number || '').replace(/\D/g, '');
+      if (!card.name || !String(card.name).trim()) errors.cardName = 'Name on card is required';
+      if (!luhn(number)) errors.cardNumber = 'Invalid card number';
+      if (!isFutureExpiry(card.expiry)) errors.cardExpiry = 'Card is expired or expiry is invalid';
+      if (!/^\d{3,4}$/.test(String(card.cvv || ''))) errors.cardCvv = 'CVV must be 3 or 4 digits';
+    }
+  } else if (method === 'upi') {
+    if (!/^[a-zA-Z0-9._-]{2,}@[a-zA-Z]{2,}$/.test(String(upiId || '').trim())) {
+      errors.upiId = 'Invalid UPI ID';
+    }
+  }
+  return errors;
+};
+
+const last4 = (digits) => String(digits || '').slice(-4);
+
 const hasOverlap = (roomId, checkIn, checkOut) => {
   return db.bookings.some((b) => {
     if (b.roomId !== roomId) return false;
@@ -54,11 +106,15 @@ app.get('/api/health', (_req, res) => res.json({ ok: true }));
 // ===== Auth =====
 app.post('/api/auth/register', async (req, res) => {
   const { name, email, password } = req.body || {};
-  if (!name || !email || !password) {
-    return res.status(400).json({ message: 'All fields are required' });
+  const errors = {};
+  if (!name || !String(name).trim()) errors.name = 'Name is required';
+  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(String(email))) errors.email = 'Enter a valid email';
+  if (!password || String(password).length < 6) errors.password = 'Password must be at least 6 characters';
+  if (Object.keys(errors).length) {
+    return res.status(400).json({ message: 'Validation failed', errors });
   }
   if (db.users.some((u) => u.email === email.toLowerCase())) {
-    return res.status(409).json({ message: 'Email already registered' });
+    return res.status(409).json({ message: 'Email already registered', errors: { email: 'Email already registered' } });
   }
   const user = {
     id: uuid(),
@@ -161,7 +217,7 @@ app.delete('/api/rooms/:id', authRequired, adminRequired, (req, res) => {
 
 // ===== Bookings =====
 app.post('/api/bookings', authRequired, (req, res) => {
-  const { roomId, checkIn, checkOut, guests, contact, specialRequest, couponCode } = req.body || {};
+  const { roomId, checkIn, checkOut, guests, contact, specialRequest, couponCode, paymentId, paymentMethod } = req.body || {};
   const room = db.rooms.find((r) => r.id === roomId);
   if (!room) return res.status(404).json({ message: 'Room not found' });
   if (!checkIn || !checkOut) return res.status(400).json({ message: 'Dates required' });
@@ -171,6 +227,15 @@ app.post('/api/bookings', authRequired, (req, res) => {
   if (hasOverlap(roomId, checkIn, checkOut)) {
     return res.status(409).json({ message: 'Room is not available for the selected dates' });
   }
+  if (!contact?.name || !contact?.email) {
+    return res.status(400).json({ message: 'Guest name and email are required' });
+  }
+
+  const payment = (db.payments || []).find((p) => p.paymentId === paymentId);
+  if (!payment || payment.userId !== req.user.id || payment.status !== 'succeeded') {
+    return res.status(402).json({ message: 'Payment is required before booking' });
+  }
+
   const nights = nightsBetween(checkIn, checkOut);
   let total = nights * room.pricePerNight;
   let discount = 0;
@@ -202,6 +267,9 @@ app.post('/api/bookings', authRequired, (req, res) => {
     discount,
     couponCode: appliedCode,
     total,
+    paymentId,
+    paymentMethod: paymentMethod || payment.method,
+    paymentLast4: payment.last4,
     paymentStatus: 'paid',
     status: 'confirmed',
     createdAt: new Date().toISOString(),
@@ -323,10 +391,46 @@ app.get('/api/admin/stats', authRequired, adminRequired, (_req, res) => {
   });
 });
 
-// ===== Payment stub (mocked) =====
+// ===== Payments =====
+// Mocked gateway — validates the same way Stripe/Razorpay would (Luhn, expiry,
+// CVV, amount) and returns a paymentId that booking creation can reference.
+// Test card 4000 0000 0000 0002 simulates a declined charge.
 app.post('/api/payments/checkout', authRequired, (req, res) => {
-  // In production this would create a Stripe/Razorpay session.
-  res.json({ ok: true, sessionId: `sess_${uuid()}`, mock: true });
+  const errors = validatePayment(req.body);
+  if (Object.keys(errors).length) {
+    return res.status(400).json({ message: 'Payment validation failed', errors });
+  }
+
+  const { method, amount, card, upiId } = req.body;
+  const number = method === 'card' ? String(card.number || '').replace(/\D/g, '') : null;
+
+  if (number === '4000000000000002') {
+    return res.status(402).json({ message: 'Card was declined by the issuing bank', errors: { cardNumber: 'Card declined' } });
+  }
+
+  const payment = {
+    paymentId: `pay_${uuid()}`,
+    method,
+    amount,
+    status: 'succeeded',
+    last4: number ? last4(number) : undefined,
+    upiId: method === 'upi' ? upiId : undefined,
+    createdAt: new Date().toISOString(),
+    userId: req.user.id,
+  };
+  db.payments = db.payments || [];
+  db.payments.push(payment);
+  res.json(payment);
+});
+
+app.get('/api/payments/:id', authRequired, (req, res) => {
+  const list = db.payments || [];
+  const payment = list.find((p) => p.paymentId === req.params.id);
+  if (!payment) return res.status(404).json({ message: 'Payment not found' });
+  if (payment.userId !== req.user.id && req.user.role !== 'admin') {
+    return res.status(403).json({ message: 'Forbidden' });
+  }
+  res.json(payment);
 });
 
 const PORT = process.env.PORT || 5001;
